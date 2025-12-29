@@ -1,0 +1,15 @@
+# Runtime data files
+FinalCSV.txt
+exclude.txt
+*.backup
+*.backup2
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Temporary files
+*.tmp
+*.log
+

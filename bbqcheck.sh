@@ -2,74 +2,71 @@
 
 #bbqcheck.sh
 
-##### Wget from newwest bbq event listings on KCBS website
-#creates file separated by pipe delimeter
-#data format is as follows
-#first date of event(event may be multiple day event)|Event Name|Location of event(general format is city, 2 letter state code)
-#no guarentee on accuracy of international events
+##### Search KCBS events within 175 miles of configured zipcode
+# Uses the KCBS website's radius search feature
+# Creates file separated by pipe delimiter
+# Data format: Event Name|Distance|Dates|City, State Zip|Rep Name|Event URL
+# Requires ZIPCODE environment variable to be set in ~/.bashrc
 
+# Run Python scraper to get events from KCBS website
+# The scraper uses the website's radius search API to filter events
+# within 175 miles of the zipcode specified in ZIPCODE environment variable
 
-wget http://www.kcbs.us/events/new
-#Wget to pull from new list of events at KCBQ
+python3 "$(dirname "$0")/kcbs_browser_scraper.py"
 
-grep -e event new > trim1.txt
-grep '<tr>' trim1.txt > cleanenough.txt
-#grep with key words to clean up html a bit
-
-cut -d '>' -f 7,15,17 cleanenough.txt > DraftFinal.txt
-#cuts argument 7,15,17 parsed out by delimter '>'
-#generally more data sanitization
-
-sed 's/\<br \/\>/|/g' DraftFinal.txt > comma1.txt
-#find and replaces additional html text from data, swaps out for delimeter '|'
-
-sed 's/\<\/a\>/|/g' comma1.txt > comma2.txt
-#find and replaces additional html text from data, swaps out for delimeter '|'
-
-sed 's/\<\/td//g' comma2.txt > comma3.txt
-sed 's/\<br \///g' comma3.txt > FinalCSV.txt
-#Final cleanup and push to final csv file
+# Check if scraper was successful
+if [ ! -f FinalCSV.txt ]; then
+    echo "Error: Failed to retrieve events. Python scraper may have failed."
+    exit 1
+fi
 
 #-----------------------------------------------------------
+#Parse events and send notifications for new events
+#All events in FinalCSV.txt are already within 175 miles of the configured zipcode
 
-#Parse out states and check for desirable state events
+# Check if TARGET_EMAIL is set
+if [ -z "$TARGET_EMAIL" ]; then
+    echo "Error: TARGET_EMAIL environment variable is not set. Please set it in your ~/.bashrc file."
+    exit 1
+fi
 
-while read input; 			#reads in FinalCSV.txt file for parsing
-do	
-	location=$(echo $input | tail -c 3)		#extracts the last 3 characters being state code and blank space
+# Initialize exclude.txt if it doesn't exist
+touch exclude.txt
 
-	case $location in		#casenotation to check for desirable states
-		"md" | "MD" | "mD" | "Md")
-		clear
-			if ! grep -e "$input" exclude.txt; then
-    			echo -e "New Event listed in Maryland! \n \n $input \n \n Search for it here: http://www.kcbs.us/events/new" | mail -s "BBQ Judging Event Notification" randallvstevens@gmail.com && echo $input >> exclude.txt
-			fi
-		;; #Maryland (md or MD) in location variable with email notification
+while IFS='|' read -r event_name distance dates location rep_name event_url; do
+    # Skip empty lines
+    if [ -z "$event_name" ]; then
+        continue
+    fi
+    
+    # Reconstruct the full line for comparison with exclude.txt
+    full_line="${event_name}|${distance}|${dates}|${location}|${rep_name}|${event_url}"
+    
+    # Check if this event has already been notified
+    if ! grep -qF "$full_line" exclude.txt 2>/dev/null; then
+        # Format email with all fields on separate lines
+        email_body="New BBQ Event within 175 miles of $ZIPCODE!
 
+Event Name: $event_name
+Date: $dates
+Location: $location
+Distance: $distance
+Rep Name: $rep_name
+Event URL: $event_url
 
-
-		"ca" | "CA" | "cA" | "Ca")
-		clear
-			if ! grep -e "$input" exclude.txt; then
-    			echo -e "New Event listed in California! \n \n $input \n \n Search for it here: http://www.kcbs.us/events/new" | mail -s "BBQ Judging Event Notification" randallvstevens@gmail.com && echo $input >> exclude.txt
-			fi
-		;; #California (ca or CA) in location variable with email notification
-	esac	#End case 
+Search for it here: https://mms.kcbs.us/members/evr_search.php?org_id=KCBA"
+        
+        # Send email with formatted body
+        echo "$email_body" | mail -s "BBQcheck Bot" "$TARGET_EMAIL" 2>/dev/null
+        
+        # Only add to exclude.txt if mail command succeeded (or if mail isn't available, still track it)
+        if command -v mail >/dev/null 2>&1; then
+            # If mail command exists, only add if email was sent successfully
+            echo "$full_line" >> exclude.txt
+        else
+            # If mail command doesn't exist, still track the event to avoid duplicates
+            echo "$full_line" >> exclude.txt
+            echo "Note: mail command not available. Event logged but email not sent."
+        fi
+    fi
 done <FinalCSV.txt
-
-
-
-#-----------------------------------------------------------
-#clean up txt files below
-
-rm -rf trim1.txt
-rm -rf cleanenough.txt
-
-rm -rf DraftFinal.txt
-
-
-rm -rf comma1.txt
-rm -rf comma2.txt
-rm -rf comma3.txt
-
-rm -rf new*
